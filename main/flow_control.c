@@ -16,7 +16,7 @@
 #define ML_FLOW_STARTED 5
 #define PULSES_FLOW_STARTED (int) (ML_FLOW_STARTED / ML_PER_PULSE)
 
-#define ML_STEP_UPDATE 50
+#define ML_STEP_UPDATE 10
 
 #define PCNT_HIGH_LIMIT (int) (ML_STEP_UPDATE / ML_PER_PULSE)
 #define PCNT_LOW_LIMIT  -1
@@ -33,6 +33,9 @@ bool is_running = false;
 flow_state_t flow_state = IDLE;
 QueueHandle_t queue;
 pcnt_unit_handle_t pcnt_unit = NULL;
+float volume_released = 0.0;
+float volume_consumed = 0.0;
+float volume_balance = 0.0;
 
 static bool cb_reach(pcnt_unit_handle_t unit, const pcnt_watch_event_data_t *edata, void *user_ctx) {
     BaseType_t high_task_wakeup;
@@ -80,15 +83,31 @@ void handle_flow_task (void *params)
         vTaskDelete( NULL );
     }
 
-
     while(1){
         if (xQueueReceive(queue, &event_count, pdMS_TO_TICKS(5000))) {
             ESP_ERROR_CHECK(pcnt_unit_get_count(pcnt_unit, &pulse_count));
-            ESP_LOGI("TEST", "Updating. Event count: %d. Pulses: %d. Volume: %.2f ml" , event_count, pulse_count, pulse_count * ML_PER_PULSE);
+            volume_consumed = pulse_count * ML_PER_PULSE;
+            volume_balance = volume_released - volume_consumed;
 
-        } else {
+            ESP_LOGI("TEST", "Updating. Volume Consumed: %.2f ml, Balance: %.2f ml" , volume_consumed, volume_balance);
+
+            if(volume_consumed >= volume_released) {
+                ESP_LOGI("TEST", "Stopping. Volume Released: %.2f ml, Volume Consumed: %.2f ml, Balance: %.2f ml", volume_released, volume_consumed, volume_balance);
+
+                flow_state = IDLE;
+                ESP_ERROR_CHECK(pcnt_unit_stop(pcnt_unit));
+                ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
+
+                vTaskDelete( NULL );
+            }
+        }
+        else
+        {
             ESP_ERROR_CHECK(pcnt_unit_get_count(pcnt_unit, &pulse_count));
-            ESP_LOGI("TEST", "Flow has stoped. Finishing operation. Pulses count: %d. Total ML: %.2f", pulse_count, pulse_count * ML_PER_PULSE);
+            volume_consumed = pulse_count * ML_PER_PULSE;
+            volume_balance = volume_released - volume_consumed;
+
+            ESP_LOGI("TEST", "Flow has stoped. Volume Released: %.2f ml, Volume Consumed: %.2f ml, Balance: %.2f ml", volume_released, volume_consumed, volume_balance);
             flow_state = IDLE;
 
             ESP_ERROR_CHECK(pcnt_unit_stop(pcnt_unit));
@@ -101,7 +120,12 @@ void handle_flow_task (void *params)
     vTaskDelete( NULL );
 }
 
-void start_new_flow_control() {
+void start_new_flow_control(float volume)
+{
+    volume_released = volume;
+    volume_consumed = 0;
+    volume_balance = volume;
+
     xTaskCreate(handle_flow_task, "HandleFlowTask", 1024 * 2, (void *)queue, 10, NULL);
 }
 
