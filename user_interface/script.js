@@ -21,3 +21,19 @@ btnRelease.addEventListener('click', () => {
     })
     .catch(err => console.log(err));
 });
+
+const protocol = "ws";
+const host = window.location.host;
+const origin = window.location.origin;
+const port = window.location.port;
+
+const exampleSocket = new WebSocket(protocol + "://" + host + "/ws/volume");
+
+exampleSocket.onopen = function (event) {
+exampleSocket.send(
+    "Aqui vai algum texto que o servidor esteja aguardando urgentemente!",
+);};
+
+exampleSocket.onmessage = function (event) {
+    alert(event.data);
+};
