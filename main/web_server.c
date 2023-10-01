@@ -151,7 +151,7 @@ static esp_err_t rest_common_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t release_volume_post_handler (httpd_req_t *req)
+static esp_err_t finish_calib_post_handler (httpd_req_t *req)
 {
     char *content;
     if(read_req_content(req, &content) != ESP_OK){
@@ -159,34 +159,15 @@ static esp_err_t release_volume_post_handler (httpd_req_t *req)
     }
 
     cJSON *root = cJSON_Parse(content);
-    int volume = cJSON_GetObjectItem(root, "volume")->valueint;
+    float factor = cJSON_GetObjectItem(root, "factor")->valuedouble;
 
-    esp_err_t ret = NULL;
+    ESP_LOGI(REST_TAG, "New factor t: %0.3f", factor);
 
-    ESP_LOGI(REST_TAG, "Volume to release: %d", volume);
+    finish_calibration(factor);
 
-    start_new_flow_control(volume);
+    httpd_resp_sendstr(req, "Ok");
 
     return ESP_OK;
-    // else if (state == 1)
-    // {
-    //     ESP_LOGI(REST_TAG, "Fan control: state = ON; Direction: %d", dir);
-    //     ret = set_fan_on(SLAVE_ADDRESS, dir);
-    // }
-
-    // if (ret == ESP_OK)
-    // {
-    //     cJSON_Delete(root);
-    //     httpd_resp_sendstr(req, "Post control value successfully");
-    //     return ESP_OK;
-    // }
-    // else
-    // {
-    //     ESP_LOGE(REST_TAG, "Failed to set fan control");
-    //     cJSON_Delete(root);
-    //     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post control value");
-    //     return ESP_FAIL;
-    // }
 }
 
 esp_err_t ws_volume_handler(httpd_req_t *req)
@@ -195,47 +176,60 @@ esp_err_t ws_volume_handler(httpd_req_t *req)
         ESP_LOGI(REST_TAG, "Handshake done, the new connection was opened");
         return ESP_OK;
     }
+
     httpd_ws_frame_t ws_pkt;
     uint8_t *buf = NULL;
+    buf = calloc(1, 100 + 1);
     memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
     ws_pkt.type = HTTPD_WS_TYPE_TEXT;
-    /* Set max_len = 0 to get the frame len */
-    esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
+
+    ws_pkt.payload = buf;
+    esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 100);
     if (ret != ESP_OK) {
-        ESP_LOGE(REST_TAG, "httpd_ws_recv_frame failed to get frame len with %d", ret);
+        ESP_LOGE(REST_TAG, "httpd_ws_recv_frame failed with %d", ret);
+        free(buf);
         return ret;
     }
-    ESP_LOGI(REST_TAG, "frame len is %d", ws_pkt.len);
-    if (ws_pkt.len) {
-        /* ws_pkt.len + 1 is for NULL termination as we are expecting a string */
-        buf = calloc(1, ws_pkt.len + 1);
-        if (buf == NULL) {
-            ESP_LOGE(REST_TAG, "Failed to calloc memory for buf");
-            return ESP_ERR_NO_MEM;
-        }
-        ws_pkt.payload = buf;
-        /* Set max_len = ws_pkt.len to get the frame payload */
-        ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
-        if (ret != ESP_OK) {
-            ESP_LOGE(REST_TAG, "httpd_ws_recv_frame failed with %d", ret);
-            free(buf);
-            return ret;
-        }
-        ESP_LOGI(REST_TAG, "Got packet with message: %s", ws_pkt.payload);
-    }
+
+    ESP_LOGI(REST_TAG, "Got packet with message: %s", ws_pkt.payload);
     ESP_LOGI(REST_TAG, "Packet type: %d", ws_pkt.type);
-    if (ws_pkt.type == HTTPD_WS_TYPE_TEXT &&
-        strcmp((char*)ws_pkt.payload,"Trigger async") == 0) {
-        free(buf);
-        // return trigger_async_send(req->handle, req);
+
+    //start a task with low priority wich will read from a queue and sned volume information through this socket
+    char * volume_str = (char*) ws_pkt.payload;
+    float volume = strtof(volume_str, NULL);
+    free(buf);
+    start_new_flow_control(volume, req->handle, req);
+    return ESP_OK;
+}
+
+esp_err_t ws_calib_handler(httpd_req_t *req)
+{
+    if (req->method == HTTP_GET) {
+        ESP_LOGI(REST_TAG, "Handshake done, the new connection was opened");
+        return ESP_OK;
     }
 
-    ret = httpd_ws_send_frame(req, &ws_pkt);
+    httpd_ws_frame_t ws_pkt;
+    uint8_t *buf = NULL;
+    buf = calloc(1, 100 + 1);
+    memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
+    ws_pkt.type = HTTPD_WS_TYPE_TEXT;
+
+    ws_pkt.payload = buf;
+    esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 100);
     if (ret != ESP_OK) {
-        ESP_LOGE(REST_TAG, "httpd_ws_send_frame failed with %d", ret);
+        ESP_LOGE(REST_TAG, "httpd_ws_recv_frame failed with %d", ret);
+        free(buf);
+        return ret;
     }
+
+    ESP_LOGI(REST_TAG, "Got packet with message: %s", ws_pkt.payload);
+    ESP_LOGI(REST_TAG, "Packet type: %d", ws_pkt.type);
+
+    
     free(buf);
-    return ret;
+    start_calibration(req->handle, req);
+    return ESP_OK;
 }
 
 esp_err_t start_web_server(const char *base_path)
@@ -262,13 +256,22 @@ esp_err_t start_web_server(const char *base_path)
     };
     httpd_register_uri_handler(server, &ws_volume_uri);
 
-     /* URI handler for release Volume */
-    httpd_uri_t release_volume_post_uri = {
-        .uri = "/api/release_volume",
+    httpd_uri_t ws_calib_uri = {
+            .uri        = "/ws/calib",
+            .method     = HTTP_GET,
+            .handler    = ws_calib_handler,
+            .user_ctx   = rest_context,
+            .is_websocket = true
+    };
+    httpd_register_uri_handler(server, &ws_calib_uri);
+
+     /* URI handler for finish calibration */
+    httpd_uri_t finish_calib_post_uri = {
+        .uri = "/api/finish_calib",
         .method = HTTP_POST,
-        .handler = release_volume_post_handler,
+        .handler = finish_calib_post_handler,
         .user_ctx = rest_context};
-    httpd_register_uri_handler(server, &release_volume_post_uri);
+    httpd_register_uri_handler(server, &finish_calib_post_uri);
 
     /* URI handler for getting web server files */
     httpd_uri_t common_get_uri = {

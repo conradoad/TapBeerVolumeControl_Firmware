@@ -19,6 +19,13 @@
         "*.py": "python",
         "*.tex": "latex",
         "stdio.h": "c",
-        "wifi.h": "c"
+        "wifi.h": "c",
+        "functional": "c",
+        "array": "c",
+        "string": "c",
+        "string_view": "c",
+        "esp_log.h": "c",
+        "sstream": "c",
+        "regex": "c"
     }
 }
