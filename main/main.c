@@ -44,6 +44,10 @@ esp_err_t init_fs(void)
 
 void app_main(void)
 {
+    //Configure IOs
+    gpio_set_direction(GPIO_NUM_23, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_23, 0);
+
     //Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -62,5 +66,7 @@ void app_main(void)
     //Initialize web server
     ESP_ERROR_CHECK(init_fs());
     ESP_ERROR_CHECK(start_web_server(WEB_MOUNT_POINT));
+
+    
 }
 

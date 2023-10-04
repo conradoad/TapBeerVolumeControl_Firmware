@@ -113,6 +113,7 @@ static void close_ws_async()
 
 static void handle_flow_task (void *params)
 {
+    gpio_set_level(GPIO_NUM_23, 1);
 
     QueueHandle_t queue = (QueueHandle_t)params;
 
@@ -134,6 +135,8 @@ static void handle_flow_task (void *params)
         send_status_msg_async("Fluxo iniciado.");
     }
     else {
+        gpio_set_level(GPIO_NUM_23, 0);
+
         ESP_LOGI("TEST", "Flow has not started in time. Cancelling operation.");
         flow_state = IDLE;
 
@@ -153,6 +156,7 @@ static void handle_flow_task (void *params)
             volume_balance = volume_released - volume_consumed;
 
             if(volume_consumed >= volume_released) {
+                gpio_set_level(GPIO_NUM_23, 0);
 
                 volume_consumed = volume_released;
                 volume_balance = 0;
@@ -176,6 +180,8 @@ static void handle_flow_task (void *params)
         }
         else
         {
+            gpio_set_level(GPIO_NUM_23, 0);
+
             ESP_ERROR_CHECK(pcnt_unit_get_count(pcnt_unit, &pulse_count));
             volume_consumed = pulse_count * ml_per_pulse;
             volume_balance = volume_released - volume_consumed;
@@ -197,6 +203,8 @@ static void handle_flow_task (void *params)
 
 static void handle_calibration_task (void *params)
 {
+    gpio_set_level(GPIO_NUM_23, 1);
+
     flow_state = CALIB;
     QueueHandle_t queue = (QueueHandle_t)params;
 
@@ -220,6 +228,8 @@ static void handle_calibration_task (void *params)
         {
         }
     }
+
+    gpio_set_level(GPIO_NUM_23, 0);
 
     ESP_ERROR_CHECK(pcnt_unit_stop(pcnt_unit));
     ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
