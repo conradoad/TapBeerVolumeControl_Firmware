@@ -14,8 +14,8 @@
 #include "cJSON.h"
 
 
-#define PULSES_STEP_STARTED 5
-#define PULSES_STEP_UPDATE 10
+#define PULSES_STEP_STARTED 1
+#define PULSES_STEP_UPDATE 1
 #define PCNT_LOW_LIMIT  -1
 
 #define CHANNEL_GPIO 4
@@ -54,7 +54,7 @@ static bool cb_reach(pcnt_unit_handle_t unit, const pcnt_watch_event_data_t *eda
         // send event data to queue, from this interrupt callback
         xQueueSendFromISR(queue, &(edata->watch_point_value), &high_task_wakeup);
     }
-    else if (flow_state == AWAITING_FLOW && edata->watch_point_value == PULSES_STEP_STARTED)
+    else if (flow_state == AWAITING_FLOW && edata->watch_point_value == PULSES_STEP_UPDATE)
     {
         // send event data to queue, from this interrupt callback
         xQueueSendFromISR(queue, &(edata->watch_point_value), &high_task_wakeup);
@@ -298,7 +298,7 @@ static void pcnt_init()
     ESP_ERROR_CHECK(pcnt_channel_set_edge_action(pcnt_channel, PCNT_CHANNEL_EDGE_ACTION_HOLD, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
 
     // add watch points
-    int watch_points[] = {PULSES_STEP_STARTED, PULSES_STEP_UPDATE};
+    int watch_points[] = {PULSES_STEP_UPDATE};
     for (size_t i = 0; i < sizeof(watch_points) / sizeof(watch_points[0]); i++) {
         ESP_ERROR_CHECK(pcnt_unit_add_watch_point(pcnt_unit, watch_points[i]));
     }
