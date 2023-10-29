@@ -26,6 +26,7 @@
         "string_view": "c",
         "esp_log.h": "c",
         "sstream": "c",
-        "regex": "c"
+        "regex": "c",
+        "esp_http_server.h": "c"
     }
 }

@@ -8,6 +8,9 @@ const inputReleaseVolume = document.querySelector('#input-release-volume');
 const statusMessageSpan = document.querySelector('#span-status-message');
 const consumedVolumeSpan = document.querySelector('#span-consumed-volume');
 const balanceVolumeSpan = document.querySelector('#span-balance-volume');
+const realVolumeInput = document.querySelector('#input_real_volume');
+const adjustFactorSpan = document.querySelector('#span-adjust-factor');
+const btnAdjust = document.querySelector('#btn-send-adjust');
 
 btnRelease.addEventListener('click', () => {
 
@@ -23,6 +26,39 @@ btnRelease.addEventListener('click', () => {
     balanceVolumeSpan.textContent = parseFloat(volume).toFixed(2);
 
     start_web_socket(volume);
+});
+
+realVolumeInput.addEventListener('input', (event) => {
+    const measured = +consumedVolumeSpan.textContent;
+
+    const adjustFactor = measured == 0 ? 1 : (event.target.value / measured);
+    adjustFactorSpan.textContent = adjustFactor.toFixed(3);
+});
+
+btnAdjust.addEventListener('click', () => {
+
+    let adjustFactor = +adjustFactorSpan.textContent
+
+    if (adjustFactor == null || adjustFactor == 0){
+        alert("Volume não pode ser vazio ou 0.");
+        return;
+    }
+
+    fetch('/api/finish_calib', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            factor: adjustFactor
+        })
+    })
+    .then(r => {
+        measuredVolumeSpan.textContent = 0.00;
+        realVolumeInput.value = 0.00;
+        adjustFactorSpan.textContent = 1.00;
+    })
+    .catch(err => console.log(err));
 });
 
 function start_web_socket(volume)
