@@ -14,7 +14,6 @@
 #include "cJSON.h"
 
 
-#define PULSES_STEP_STARTED 1
 #define PULSES_STEP_UPDATE 1
 #define PCNT_LOW_LIMIT  -1
 
@@ -24,13 +23,15 @@ typedef enum {
     IDLE,
     AWAITING_FLOW,
     FLOWING,
-    CALIB
+    FINISHED
 } flow_state_t;
 
-typedef enum {
-    STATUS,
-    VOLUME
-} ws_msg_type_t;
+typedef struct{
+    flow_state_t flow_state;
+    float volume_consumed;
+    float volume_balance;
+    char *msg;
+}ws_response_msg_t;
 
 struct ws_ctx_t {
     httpd_handle_t hd;
@@ -40,7 +41,8 @@ struct ws_ctx_t {
 float ml_per_pulse;
 
 flow_state_t flow_state = IDLE;
-QueueHandle_t queue;
+QueueHandle_t queue_pulse_event;
+QueueHandle_t queue_web_socket;
 pcnt_unit_handle_t pcnt_unit = NULL;
 float volume_released = 0.0;
 float volume_consumed = 0.0;
@@ -49,57 +51,24 @@ float volume_balance = 0.0;
 static bool cb_reach(pcnt_unit_handle_t unit, const pcnt_watch_event_data_t *edata, void *user_ctx) {
     BaseType_t high_task_wakeup;
 
-    if ((flow_state == FLOWING || flow_state == CALIB) && edata->watch_point_value == PULSES_STEP_UPDATE)
-    {
-        // send event data to queue, from this interrupt callback
-        xQueueSendFromISR(queue, &(edata->watch_point_value), &high_task_wakeup);
-    }
-    else if (flow_state == AWAITING_FLOW && edata->watch_point_value == PULSES_STEP_UPDATE)
-    {
-        // send event data to queue, from this interrupt callback
-        xQueueSendFromISR(queue, &(edata->watch_point_value), &high_task_wakeup);
-    }
+    // send event data to queue, from this interrupt callback
+    xQueueSendFromISR(queue_pulse_event, &(edata->watch_point_value), &high_task_wakeup);
 
     return (high_task_wakeup == pdTRUE);
 }
 
-static void send_status_msg_async(char* msg)
+static void queue_ws_message(flow_state_t state, char* msg, float volume_consumed, float volume_balance)
 {
-    cJSON* responseObj = cJSON_CreateObject();
+    ws_response_msg_t response_msg = {
+        .flow_state = state,
+        .msg = msg,
+        .volume_consumed = volume_consumed,
+        .volume_balance = volume_balance,
+    };
 
-    cJSON_AddNumberToObject(responseObj, "type", STATUS);
-    cJSON_AddStringToObject(responseObj, "msg", msg);
-
-    char* response = cJSON_Print(responseObj);
-
-    httpd_ws_frame_t ws_pkt;
-    memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
-
-    ws_pkt.payload = (uint8_t*) response;
-    ws_pkt.len = strlen(response);
-    ws_pkt.type = HTTPD_WS_TYPE_TEXT;
-
-    httpd_ws_send_frame_async(ws_ctx.hd, ws_ctx.fd, &ws_pkt);
-}
-
-static void send_volume_async(float volume_consumed, float volume_balance)
-{
-    cJSON* responseObj = cJSON_CreateObject();
-
-    cJSON_AddNumberToObject(responseObj, "type", VOLUME);
-    cJSON_AddNumberToObject(responseObj, "volume_consumed", volume_consumed);
-    cJSON_AddNumberToObject(responseObj, "volume_balance", volume_balance);
-
-    char* response = cJSON_Print(responseObj);
-
-    httpd_ws_frame_t ws_pkt;
-    memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
-
-    ws_pkt.payload = (uint8_t*) response;
-    ws_pkt.len = strlen(response);
-    ws_pkt.type = HTTPD_WS_TYPE_TEXT;
-
-    httpd_ws_send_frame_async(ws_ctx.hd, ws_ctx.fd, &ws_pkt);
+    if(xQueueSend(queue_web_socket, &response_msg, pdMS_TO_TICKS(1000)) != pdPASS){
+        ESP_LOGE("TEST", "Failed to push to 'queue_web_socket'");
+    }
 }
 
 static void close_ws_async()
@@ -111,37 +80,70 @@ static void close_ws_async()
     httpd_ws_send_frame_async(ws_ctx.hd, ws_ctx.fd, &ws_pkt);
 }
 
+static void handle_send_ws_message_task(){
+
+    ws_response_msg_t response_msg;
+
+    while(1){
+        if (xQueueReceive(queue_web_socket, &response_msg, pdMS_TO_TICKS(10000))) {
+
+            cJSON* responseObj = cJSON_CreateObject();
+
+            cJSON_AddNumberToObject(responseObj, "state", response_msg.flow_state);
+            cJSON_AddStringToObject(responseObj, "msg", response_msg.msg);
+            cJSON_AddNumberToObject(responseObj, "volume_consumed", response_msg.volume_consumed);
+            cJSON_AddNumberToObject(responseObj, "volume_balance", response_msg.volume_balance);
+
+            char* response = cJSON_Print(responseObj);
+            httpd_ws_frame_t ws_pkt;
+            memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
+
+            ws_pkt.payload = (uint8_t*) response;
+            ws_pkt.len = strlen(response);
+            ws_pkt.type = HTTPD_WS_TYPE_TEXT;
+
+            httpd_ws_send_frame_async(ws_ctx.hd, ws_ctx.fd, &ws_pkt);
+
+            free(response);
+            cJSON_Delete(responseObj);
+
+            if (response_msg.flow_state == FINISHED){
+                close_ws_async();
+                flow_state = IDLE;
+            }
+        }
+    }
+}
+
 static void handle_flow_task (void *params)
 {
+    //release valve
     gpio_set_level(GPIO_NUM_23, 1);
-
-    QueueHandle_t queue = (QueueHandle_t)params;
 
     ESP_LOGI("TEST", "Waiting for flow start.");
     ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
     ESP_ERROR_CHECK(pcnt_unit_start(pcnt_unit));
     flow_state = AWAITING_FLOW;
 
-    send_status_msg_async("Liberado. Inicie o fluxo.");
+    xTaskCreate(handle_send_ws_message_task, "HandleSendWsMessageTask", 1024 * 2, (void *) NULL, 5, NULL);
+    queue_ws_message(flow_state, "Liberado. Inicie o fluxo.", volume_consumed, volume_balance);
 
     // Report counter value
     int pulse_count = 0;
     int event_count = 0;
 
     // Await for flow start
-    if (xQueueReceive(queue, &event_count, pdMS_TO_TICKS(10000))) {
+    if (xQueueReceive(queue_pulse_event, &event_count, pdMS_TO_TICKS(10000))) {
         ESP_LOGI("TEST", "Flow has started. Event, count: %d", event_count);
         flow_state = FLOWING;
-        send_status_msg_async("Fluxo iniciado.");
+        queue_ws_message(flow_state, "Fluxo iniciado.", volume_consumed, volume_balance);
     }
     else {
         gpio_set_level(GPIO_NUM_23, 0);
 
         ESP_LOGI("TEST", "Flow has not started in time. Cancelling operation.");
-        flow_state = IDLE;
-
-        send_status_msg_async("Fluxo não iniciado no tempo. Cancelando.");
-        close_ws_async();
+        flow_state = FINISHED;
+        queue_ws_message(flow_state, "Fluxo não iniciado no tempo. Cancelando.", volume_consumed, volume_balance);
 
         ESP_ERROR_CHECK(pcnt_unit_stop(pcnt_unit));
         ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
@@ -150,7 +152,7 @@ static void handle_flow_task (void *params)
     }
 
     while(1){
-        if (xQueueReceive(queue, &event_count, pdMS_TO_TICKS(5000))) {
+        if (xQueueReceive(queue_pulse_event, &event_count, pdMS_TO_TICKS(5000))) {
             ESP_ERROR_CHECK(pcnt_unit_get_count(pcnt_unit, &pulse_count));
             volume_consumed = pulse_count * ml_per_pulse;
             volume_balance = volume_released - volume_consumed;
@@ -158,25 +160,21 @@ static void handle_flow_task (void *params)
             if(volume_consumed >= volume_released) {
                 gpio_set_level(GPIO_NUM_23, 0);
 
+                flow_state = FINISHED;
                 volume_consumed = volume_released;
                 volume_balance = 0;
 
-                ESP_LOGI("TEST", "Updating. Pulse Count: %d,  Volume Consumed: %.2f ml, Balance: %.2f ml", pulse_count, volume_consumed, volume_balance);
-                send_volume_async(volume_consumed, volume_balance);
-
-                ESP_LOGI("TEST", "Stopping. Volume Released: %.2f ml, Volume Consumed: %.2f ml, Balance: %.2f ml", volume_released, volume_consumed, volume_balance);
-                send_status_msg_async("Volume liberado esgotado. Finalizando.");
-                close_ws_async();
-
-                flow_state = IDLE;
                 ESP_ERROR_CHECK(pcnt_unit_stop(pcnt_unit));
                 ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
+
+                ESP_LOGI("TEST", "Stopping. Volume Released: %.2f ml, Volume Consumed: %.2f ml, Balance: %.2f ml", volume_released, volume_consumed, volume_balance);
+                queue_ws_message(flow_state, "Volume liberado esgotado. Finalizando.", volume_consumed, volume_balance);
 
                 vTaskDelete( NULL );
             }
 
             ESP_LOGI("TEST", "Updating. Pulse Count: %d,  Volume Consumed: %.2f ml, Balance: %.2f ml", pulse_count, volume_consumed, volume_balance);
-            send_volume_async(volume_consumed, volume_balance);
+            queue_ws_message(flow_state, "Fluxo iniciado.", volume_consumed, volume_balance);
         }
         else
         {
@@ -187,10 +185,9 @@ static void handle_flow_task (void *params)
             volume_balance = volume_released - volume_consumed;
 
             ESP_LOGI("TEST", "Flow has stoped. Volume Released: %.2f ml, Volume Consumed: %.2f ml, Balance: %.2f ml", volume_released, volume_consumed, volume_balance);
-            flow_state = IDLE;
+            flow_state = FINISHED;
 
-            send_status_msg_async("Fluxo interrompido. Finalizando.");
-            close_ws_async();
+            queue_ws_message(flow_state, "Fluxo interrompido. Finalizando.", volume_consumed, volume_balance);
 
             ESP_ERROR_CHECK(pcnt_unit_stop(pcnt_unit));
             ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
@@ -198,43 +195,6 @@ static void handle_flow_task (void *params)
             vTaskDelete( NULL );
         }
     }
-    vTaskDelete( NULL );
-}
-
-static void handle_calibration_task (void *params)
-{
-    gpio_set_level(GPIO_NUM_23, 1);
-
-    flow_state = CALIB;
-    QueueHandle_t queue = (QueueHandle_t)params;
-
-    ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
-    ESP_ERROR_CHECK(pcnt_unit_start(pcnt_unit));
-
-    // Report counter value
-    int pulse_count = 0;
-    int event_count = 0;
-
-    while(flow_state == CALIB){
-        if (xQueueReceive(queue, &event_count, pdMS_TO_TICKS(1000))) {
-
-            ESP_ERROR_CHECK(pcnt_unit_get_count(pcnt_unit, &pulse_count));
-            volume_consumed = pulse_count * ml_per_pulse;
-
-            ESP_LOGI("TEST", "Updating. Pulse Count: %d,  Volume Consumed: %.2f ml", pulse_count, volume_consumed);
-            send_volume_async(volume_consumed, 0);
-        }
-        else
-        {
-        }
-    }
-
-    gpio_set_level(GPIO_NUM_23, 0);
-
-    ESP_ERROR_CHECK(pcnt_unit_stop(pcnt_unit));
-    ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
-    close_ws_async();
-
     vTaskDelete( NULL );
 }
 
@@ -247,17 +207,7 @@ static void start_new_flow_control(float volume, httpd_handle_t http_handle, htt
     ws_ctx.hd = http_handle;
     ws_ctx.fd = httpd_req_to_sockfd(req);
 
-    xTaskCreate(handle_flow_task, "HandleFlowTask", 1024 * 4, (void *)queue, 10, NULL);
-}
-
-static void start_calibration(httpd_handle_t http_handle, httpd_req_t* req)
-{
-    volume_consumed = 0;
-
-    ws_ctx.hd = http_handle;
-    ws_ctx.fd = httpd_req_to_sockfd(req);
-
-    xTaskCreate(handle_calibration_task, "HandleCalibrationTask", 1024 * 4, (void *)queue, 10, NULL);
+    xTaskCreate(handle_flow_task, "HandleFlowTask", 1024 * 2, (void *) NULL, 10, NULL);
 }
 
 static void update_ml_per_pulse(float factor) {
@@ -307,8 +257,10 @@ static void pcnt_init()
         .on_reach = cb_reach
     };
 
-    queue = xQueueCreate(10, sizeof(int));
-    ESP_ERROR_CHECK(pcnt_unit_register_event_callbacks(pcnt_unit, &cbs, queue));
+    queue_web_socket = xQueueCreate(10, sizeof(ws_response_msg_t));
+
+    queue_pulse_event = xQueueCreate(10, sizeof(int));
+    ESP_ERROR_CHECK(pcnt_unit_register_event_callbacks(pcnt_unit, &cbs, queue_pulse_event));
 
     ESP_ERROR_CHECK(pcnt_unit_enable(pcnt_unit));
 }

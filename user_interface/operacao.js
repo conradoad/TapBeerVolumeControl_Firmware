@@ -75,12 +75,8 @@ function start_web_socket(volume)
     exampleSocket.onmessage = function (event) {
         const resp = JSON.parse(event.data)
 
-        if (resp.type == MSG_TYPE.STATUS) {
-            statusMessageSpan.textContent = resp.msg;
-        }
-        else if (resp.type == MSG_TYPE.VOLUME){
-            consumedVolumeSpan.textContent = parseFloat(resp.volume_consumed).toFixed(2);
-            balanceVolumeSpan.textContent = parseFloat(resp.volume_balance).toFixed(2);
-        }
+        statusMessageSpan.textContent = resp.msg;
+        consumedVolumeSpan.textContent = parseFloat(resp.volume_consumed).toFixed(2);
+        balanceVolumeSpan.textContent = parseFloat(resp.volume_balance).toFixed(2);
     };
 }

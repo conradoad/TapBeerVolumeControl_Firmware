@@ -202,36 +202,6 @@ esp_err_t ws_volume_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-esp_err_t ws_calib_handler(httpd_req_t *req)
-{
-    if (req->method == HTTP_GET) {
-        ESP_LOGI(REST_TAG, "Handshake done, the new connection was opened");
-        return ESP_OK;
-    }
-
-    httpd_ws_frame_t ws_pkt;
-    uint8_t *buf = NULL;
-    buf = calloc(1, 100 + 1);
-    memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
-    ws_pkt.type = HTTPD_WS_TYPE_TEXT;
-
-    ws_pkt.payload = buf;
-    esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 100);
-    if (ret != ESP_OK) {
-        ESP_LOGE(REST_TAG, "httpd_ws_recv_frame failed with %d", ret);
-        free(buf);
-        return ret;
-    }
-
-    ESP_LOGI(REST_TAG, "Got packet with message: %s", ws_pkt.payload);
-    ESP_LOGI(REST_TAG, "Packet type: %d", ws_pkt.type);
-
-    
-    free(buf);
-    start_calibration(req->handle, req);
-    return ESP_OK;
-}
-
 esp_err_t start_web_server(const char *base_path)
 {
     REST_CHECK(base_path, "wrong base path", err);
@@ -247,6 +217,7 @@ esp_err_t start_web_server(const char *base_path)
     ESP_LOGI(REST_TAG, "Starting HTTP Server");
     REST_CHECK(httpd_start(&server, &config) == ESP_OK, "Start server failed", err_start);
 
+    /* URI handler for release volume */
     httpd_uri_t ws_volume_uri = {
             .uri        = "/ws/volume",
             .method     = HTTP_GET,
@@ -255,15 +226,6 @@ esp_err_t start_web_server(const char *base_path)
             .is_websocket = true
     };
     httpd_register_uri_handler(server, &ws_volume_uri);
-
-    httpd_uri_t ws_calib_uri = {
-            .uri        = "/ws/calib",
-            .method     = HTTP_GET,
-            .handler    = ws_calib_handler,
-            .user_ctx   = rest_context,
-            .is_websocket = true
-    };
-    httpd_register_uri_handler(server, &ws_calib_uri);
 
      /* URI handler for finish calibration */
     httpd_uri_t finish_calib_post_uri = {
