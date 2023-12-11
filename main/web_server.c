@@ -173,8 +173,12 @@ static esp_err_t finish_calib_post_handler (httpd_req_t *req)
 esp_err_t ws_volume_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET) {
-        ESP_LOGI(REST_TAG, "Handshake done, the new connection was opened");
-        return ESP_OK;
+        if (flow_state == IDLE){
+            ESP_LOGI(REST_TAG, "Handshake done, the new connection was opened");
+            return ESP_OK;
+        }
+
+        return ESP_FAIL;
     }
 
     httpd_ws_frame_t ws_pkt;
@@ -194,12 +198,12 @@ esp_err_t ws_volume_handler(httpd_req_t *req)
     ESP_LOGI(REST_TAG, "Got packet with message: %s", ws_pkt.payload);
     ESP_LOGI(REST_TAG, "Packet type: %d", ws_pkt.type);
 
-    //start a task with low priority wich will read from a queue and sned volume information through this socket
+    //start a task wich will read from a queue and sned volume information through this socket
     char * volume_str = (char*) ws_pkt.payload;
     float volume = strtof(volume_str, NULL);
     free(buf);
-    start_new_flow_control(volume, req->handle, req);
-    return ESP_OK;
+    ret = start_new_flow(volume, req->handle, req);
+    return ret;
 }
 
 esp_err_t start_web_server(const char *base_path)

@@ -13,11 +13,13 @@
 #include "esp_http_server.h"
 #include "cJSON.h"
 
+#define VALVE_OUTPUT GPIO_NUM_23
+#define LED_OUTPUT GPIO_NUM_17
 
 #define PULSES_STEP_UPDATE 1
 #define PCNT_LOW_LIMIT  -1
 
-#define CHANNEL_GPIO 4
+#define CHANNEL_GPIO 27
 
 typedef enum {
     IDLE,
@@ -78,6 +80,8 @@ static void close_ws_async()
     ws_pkt.type = HTTPD_WS_TYPE_CLOSE;
 
     httpd_ws_send_frame_async(ws_ctx.hd, ws_ctx.fd, &ws_pkt);
+
+    free(ws_pkt.payload);
 }
 
 static void handle_send_ws_message_task(){
@@ -108,8 +112,11 @@ static void handle_send_ws_message_task(){
             cJSON_Delete(responseObj);
 
             if (response_msg.flow_state == FINISHED){
+                heap_caps_print_heap_info(MALLOC_CAP_8BIT);
                 close_ws_async();
                 flow_state = IDLE;
+
+                vTaskDelete( NULL );
             }
         }
     }
@@ -118,7 +125,8 @@ static void handle_send_ws_message_task(){
 static void handle_flow_task (void *params)
 {
     //release valve
-    gpio_set_level(GPIO_NUM_23, 1);
+    gpio_set_level(VALVE_OUTPUT, 1);
+    gpio_set_level(LED_OUTPUT, 1);
 
     ESP_LOGI("TEST", "Waiting for flow start.");
     ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
@@ -139,7 +147,8 @@ static void handle_flow_task (void *params)
         queue_ws_message(flow_state, "Fluxo iniciado.", volume_consumed, volume_balance);
     }
     else {
-        gpio_set_level(GPIO_NUM_23, 0);
+        gpio_set_level(VALVE_OUTPUT, 0);
+        gpio_set_level(LED_OUTPUT, 0);
 
         ESP_LOGI("TEST", "Flow has not started in time. Cancelling operation.");
         flow_state = FINISHED;
@@ -147,6 +156,7 @@ static void handle_flow_task (void *params)
 
         ESP_ERROR_CHECK(pcnt_unit_stop(pcnt_unit));
         ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
+        xQueueReset(queue_pulse_event);
 
         vTaskDelete( NULL );
     }
@@ -158,7 +168,8 @@ static void handle_flow_task (void *params)
             volume_balance = volume_released - volume_consumed;
 
             if(volume_consumed >= volume_released) {
-                gpio_set_level(GPIO_NUM_23, 0);
+                gpio_set_level(VALVE_OUTPUT, 0);
+                gpio_set_level(LED_OUTPUT, 0);
 
                 flow_state = FINISHED;
                 volume_consumed = volume_released;
@@ -166,6 +177,7 @@ static void handle_flow_task (void *params)
 
                 ESP_ERROR_CHECK(pcnt_unit_stop(pcnt_unit));
                 ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
+                xQueueReset(queue_pulse_event);
 
                 ESP_LOGI("TEST", "Stopping. Volume Released: %.2f ml, Volume Consumed: %.2f ml, Balance: %.2f ml", volume_released, volume_consumed, volume_balance);
                 queue_ws_message(flow_state, "Volume liberado esgotado. Finalizando.", volume_consumed, volume_balance);
@@ -178,7 +190,8 @@ static void handle_flow_task (void *params)
         }
         else
         {
-            gpio_set_level(GPIO_NUM_23, 0);
+            gpio_set_level(VALVE_OUTPUT, 0);
+            gpio_set_level(LED_OUTPUT, 0);
 
             ESP_ERROR_CHECK(pcnt_unit_get_count(pcnt_unit, &pulse_count));
             volume_consumed = pulse_count * ml_per_pulse;
@@ -198,16 +211,20 @@ static void handle_flow_task (void *params)
     vTaskDelete( NULL );
 }
 
-static void start_new_flow_control(float volume, httpd_handle_t http_handle, httpd_req_t* req)
+static esp_err_t start_new_flow(float volume, httpd_handle_t http_handle, httpd_req_t* req)
 {
-    volume_released = volume;
-    volume_consumed = 0;
-    volume_balance = volume;
+    if (flow_state == IDLE){
+        volume_released = volume;
+        volume_consumed = 0;
+        volume_balance = volume;
 
-    ws_ctx.hd = http_handle;
-    ws_ctx.fd = httpd_req_to_sockfd(req);
+        ws_ctx.hd = http_handle;
+        ws_ctx.fd = httpd_req_to_sockfd(req);
 
-    xTaskCreate(handle_flow_task, "HandleFlowTask", 1024 * 2, (void *) NULL, 10, NULL);
+        xTaskCreate(handle_flow_task, "HandleFlowTask", 1024 * 2, (void *) NULL, 10, NULL);
+        return ESP_OK;
+    }
+    return ESP_FAIL;
 }
 
 static void update_ml_per_pulse(float factor) {

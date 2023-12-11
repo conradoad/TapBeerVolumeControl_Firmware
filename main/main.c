@@ -11,6 +11,10 @@
 
 #define WEB_MOUNT_POINT "/www"
 
+#define SEL1_INPUT GPIO_NUM_32
+#define SEL2_INPUT GPIO_NUM_33
+#define SEL3_INPUT GPIO_NUM_25
+
 esp_err_t init_fs(void)
 {
     esp_vfs_spiffs_conf_t conf = {
@@ -45,8 +49,30 @@ esp_err_t init_fs(void)
 void app_main(void)
 {
     //Configure IOs
-    gpio_set_direction(GPIO_NUM_23, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_23, 0);
+    gpio_set_direction(VALVE_OUTPUT, GPIO_MODE_OUTPUT);
+    gpio_set_level(VALVE_OUTPUT, 0);
+
+    gpio_set_direction(LED_OUTPUT, GPIO_MODE_OUTPUT);
+    gpio_set_pull_mode(LED_OUTPUT, GPIO_PULLDOWN_ONLY);
+    gpio_set_level(LED_OUTPUT, 0);
+
+    gpio_set_direction(SEL1_INPUT, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(SEL1_INPUT, GPIO_PULLUP_ONLY);
+
+    gpio_set_direction(SEL2_INPUT, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(SEL2_INPUT, GPIO_PULLUP_ONLY);
+
+    gpio_set_direction(SEL3_INPUT, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(SEL3_INPUT, GPIO_PULLUP_ONLY);
+
+
+    //Only for testing purpose
+
+    // if (!gpio_get_level(SEL1_INPUT) || !gpio_get_level(SEL2_INPUT) || !gpio_get_level(SEL3_INPUT)) {
+    //     gpio_set_level(LED_OUTPUT, 1);
+    //     vTaskDelay(pdMS_TO_TICKS(3000));
+    //     gpio_set_level(LED_OUTPUT, 0);
+    // }
 
     //Initialize NVS
     esp_err_t ret = nvs_flash_init();
@@ -66,7 +92,5 @@ void app_main(void)
     //Initialize web server
     ESP_ERROR_CHECK(init_fs());
     ESP_ERROR_CHECK(start_web_server(WEB_MOUNT_POINT));
-
-    
 }
 
