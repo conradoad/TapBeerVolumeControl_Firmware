@@ -12,6 +12,7 @@
 #include "esp_system.h"
 #include "esp_http_server.h"
 #include "cJSON.h"
+#include "nvs_flash.h"
 
 #define VALVE_OUTPUT GPIO_NUM_23
 #define LED_OUTPUT GPIO_NUM_17
@@ -20,6 +21,8 @@
 #define PCNT_LOW_LIMIT  -1
 
 #define CHANNEL_GPIO 27
+
+#define ML_PER_PULSE_DEFAULT "2.0"
 
 typedef enum {
     IDLE,
@@ -112,7 +115,6 @@ static void handle_send_ws_message_task(){
             cJSON_Delete(responseObj);
 
             if (response_msg.flow_state == FINISHED){
-                heap_caps_print_heap_info(MALLOC_CAP_8BIT);
                 close_ws_async();
                 flow_state = IDLE;
 
@@ -227,9 +229,76 @@ static esp_err_t start_new_flow(float volume, httpd_handle_t http_handle, httpd_
     return ESP_FAIL;
 }
 
+
+static void set_ml_per_pulse_to_nvs(float ml_per_pulse) {
+    // Open NVS
+    ESP_LOGI("NVS", "Opening Non-Volatile Storage (NVS) handle... ");
+    esp_err_t ret;
+    nvs_handle_t main_nvs_handle;
+    ret = nvs_open("nvs", NVS_READWRITE, &main_nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGI("NVS", "Error (%s) opening NVS handle!\n", esp_err_to_name(ret));
+    }
+    else {
+        ESP_LOGI("NVS", "Non-Volatile Storage (NVS) opened");
+    }
+
+    char ml_per_pulse_str[10];
+    sprintf(ml_per_pulse_str, "%f", ml_per_pulse);
+
+    ret = nvs_set_str(main_nvs_handle, "ml_per_pulse", ml_per_pulse_str);
+    ESP_LOGI("NVS", "Setting Ml_per_pulse with %s is %s", ml_per_pulse_str, (ret != ESP_OK) ? "Failed!\n" : "Done\n");
+    
+    ESP_LOGI("NVS", "Committing updates in NVS ... ");
+    ret = nvs_commit(main_nvs_handle);
+    ESP_LOGI("NVS", "%s" ,(ret != ESP_OK) ? "Failed!\n" : "Done\n");
+    
+    // Close
+    nvs_close(main_nvs_handle);
+}
+
+
+static char * get_ml_per_pulse_from_nvs() {
+    // Open NVS
+    ESP_LOGI("NVS", "Opening Non-Volatile Storage (NVS) handle... ");
+    esp_err_t ret;
+    nvs_handle_t main_nvs_handle;
+    ret = nvs_open("nvs", NVS_READWRITE, &main_nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGI("NVS", "Error (%s) opening NVS handle!\n", esp_err_to_name(ret));
+    }
+    else {
+        ESP_LOGI("NVS", "Non-Volatile Storage (NVS) opened");
+    }
+
+    size_t req_size;
+    nvs_get_str(main_nvs_handle, "ml_per_pulse", NULL, &req_size);
+    char *ml_per_pulse = malloc(req_size);
+    ret = nvs_get_str(main_nvs_handle, "ml_per_pulse", ml_per_pulse, &req_size);
+    nvs_get_str(main_nvs_handle, "ml_per_pulse", NULL, &req_size);
+
+    // Close
+    nvs_close(main_nvs_handle);
+
+    switch (ret) {
+        case ESP_OK:
+            ESP_LOGI("NVS", "Ml_per_pulse getted with success from NVS. Ml_per_pulse: %s", ml_per_pulse);
+            return ml_per_pulse;
+
+        case ESP_ERR_NVS_NOT_FOUND:
+            ESP_LOGI("NVS", "Ml_per_pulse is not set. Initializing with default value: %s.", ML_PER_PULSE_DEFAULT);
+            set_ml_per_pulse_to_nvs(strtof(ML_PER_PULSE_DEFAULT, NULL));
+            return ML_PER_PULSE_DEFAULT;
+        default :
+            ESP_LOGI("NVS", "Error (%s) reading!\n", esp_err_to_name(ret));
+            esp_restart();
+    }
+}
+
 static void update_ml_per_pulse(float factor) {
     ml_per_pulse *= factor;
-    ESP_LOGI("TEST", "Ml per pulse was updated to: %0.3f", ml_per_pulse);
+    set_ml_per_pulse_to_nvs(ml_per_pulse);
+    ESP_LOGI("TEST", "Ml per pulse was updated to: %0.5f", ml_per_pulse);
 }
 
 static void finish_calibration(float adjust_factor){
@@ -240,7 +309,11 @@ static void finish_calibration(float adjust_factor){
 
 static void pcnt_init()
 {
-    ml_per_pulse = 2;
+    char * ml_per_pulse_str = get_ml_per_pulse_from_nvs();
+
+    ml_per_pulse = strtof(ml_per_pulse_str, NULL);
+
+    ESP_LOGI("TEST", "Using ML per Pulse : %0.5f", ml_per_pulse);
 
     pcnt_unit_config_t unit_config = {
         .flags.accum_count = 1,

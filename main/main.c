@@ -83,8 +83,11 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     //Initialize WiFi Station
-    ESP_LOGI("WiFi", "ESP_WIFI_MODE_STA");
-    wifi_init_sta();
+    // ESP_LOGI("WiFi", "ESP_WIFI_MODE_STA");
+    // wifi_init_sta();
+    
+    ESP_LOGI("WiFi", "ESP_WIFI_MODE_AP");
+    wifi_init_ap();
 
     //Initialize Pulse Counter Unit
     pcnt_init();
