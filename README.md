@@ -1,35 +1,40 @@
-| Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C6 | ESP32-H2 | ESP32-S2 | ESP32-S3 |
-| ----------------- | ----- | -------- | -------- | -------- | -------- | -------- | -------- |
+# Tap Beer Flow Control - Firmware
 
-# _Sample project_
+Firmware developed using ESP-IDF 5 for the ESP32 module to control the volume dispensed from a tap beer (or any other liquid, such as water).
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+View the developed hardware in this repository: [TapBeerVolumeControl_Hardware](https://github.com/conradoad/TapBeerVolumeControl_Hardware)
 
-This is the simplest buildable example. The example is used by command `idf.py create-project`
-that copies the project to user specified path and set it's name. For more information follow the [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project)
+In the control part, the ESP32 module counts pulses from a simple flow sensor, converting them into volume units, and controls the flow by opening or closing a simple normally closed (NC) solenoid valve.
 
+## Hardware Components
+- ESP32 DevKitC
 
+![image](https://github.com/conradoad/TapBeerVolumeControl_Firmware/assets/29844580/db13a53b-07f1-4f51-bf78-cfb2f3f90016)
 
-## How to use example
-We encourage the users to use the example as a template for the new projects.
-A recommended way is to follow the instructions on a [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project).
+- Flow Sensor
 
-## Example folder contents
+![image](https://github.com/conradoad/TapBeerVolumeControl_Firmware/assets/29844580/ab74c18c-ce00-41c9-9de3-dadd1bc7982a)
 
-The project **sample_project** contains one source file in C language [main.c](main/main.c). The file is located in folder [main](main).
+- Solenoid Valve
 
-ESP-IDF projects are built using CMake. The project build configuration is contained in `CMakeLists.txt`
-files that provide set of directives and instructions describing the project's source files and targets
-(executable, library, or both). 
+![image](https://github.com/conradoad/TapBeerVolumeControl_Firmware/assets/29844580/3be64cb3-19aa-4d34-be2e-7c64511d2974)
 
-Below is short explanation of remaining files in the project folder.
+The firmware's interfacing part includes an HTTP server hosting a simple HTML+CSS+JS webpage and a REST API with a few endpoints for releasing the flow and calibrating.
 
-```
-├── CMakeLists.txt
-├── main
-│   ├── CMakeLists.txt
-│   └── main.c
-└── README.md                  This is the file you are currently reading
-```
-Additionally, the sample project contains Makefile and component.mk files, used for the legacy Make based build system. 
-They are not used or needed when building with CMake and idf.py.
+## Interface
+
+- Note 1: is the interface in portuguese because its for a Brazilian client.
+- Note 2: it is only a POC, for validating and testing purpose
+
+![image](https://github.com/conradoad/TapBeerVolumeControl_Firmware/assets/29844580/541143b0-7c00-452c-bb65-45fbab547dda)
+
+In the operational part, you can set the volume to be released. The system opens the valve. If no starting flow is detected in 10 seconds, the valve is closed. Once started, the valve remains open until the released volume is fully consumed or if the flow is interrupted for 5 seconds.
+
+The status message, consumed volume, and balance are updated in real-time through an open WebSocket.
+
+In the calibration section, you have the option to input the accurate volume and adjust the proportional constant used for converting pulses to volume.
+
+## Video
+
+TODO: upload video
+
