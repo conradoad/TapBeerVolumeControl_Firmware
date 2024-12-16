@@ -12,6 +12,8 @@ const realVolumeInput = document.querySelector('#input_real_volume');
 const adjustFactorSpan = document.querySelector('#span-adjust-factor');
 const btnAdjust = document.querySelector('#btn-send-adjust');
 
+var webSocket;
+
 btnRelease.addEventListener('click', () => {
 
     let volume = +inputReleaseVolume?.value
@@ -66,13 +68,17 @@ function start_web_socket(volume)
     const protocol = "ws";
     const host = window.location.host;
 
-    const exampleSocket = new WebSocket(protocol + "://" + host + "/ws/volume");
+    if (webSocket != undefined && webSocket.readyState != 3){
+        webSocket.close();
+    }
 
-    exampleSocket.onopen = function (event) {
-        exampleSocket.send(volume);
+    webSocket = new WebSocket(protocol + "://" + host + "/ws/volume");
+
+    webSocket.onopen = function (event) {
+        webSocket.send(volume);
     };
 
-    exampleSocket.onmessage = function (event) {
+    webSocket.onmessage = function (event) {
         const resp = JSON.parse(event.data)
 
         statusMessageSpan.textContent = resp.msg;

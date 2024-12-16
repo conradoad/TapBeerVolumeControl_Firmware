@@ -135,7 +135,7 @@ static void handle_flow_task (void *params)
     ESP_ERROR_CHECK(pcnt_unit_start(pcnt_unit));
     flow_state = AWAITING_FLOW;
 
-    xTaskCreate(handle_send_ws_message_task, "HandleSendWsMessageTask", 1024 * 2, (void *) NULL, 5, NULL);
+    xTaskCreate(handle_send_ws_message_task, "HandleSendWsMessageTask", 1024 * 4, (void *) NULL, 5, NULL);
     queue_ws_message(flow_state, "Liberado. Inicie o fluxo.", volume_consumed, volume_balance);
 
     // Report counter value
@@ -223,7 +223,7 @@ static esp_err_t start_new_flow(float volume, httpd_handle_t http_handle, httpd_
         ws_ctx.hd = http_handle;
         ws_ctx.fd = httpd_req_to_sockfd(req);
 
-        xTaskCreate(handle_flow_task, "HandleFlowTask", 1024 * 2, (void *) NULL, 10, NULL);
+        xTaskCreate(handle_flow_task, "HandleFlowTask", 1024 * 4, (void *) NULL, 10, NULL);
         return ESP_OK;
     }
     return ESP_FAIL;
@@ -347,7 +347,7 @@ static void pcnt_init()
         .on_reach = cb_reach
     };
 
-    queue_web_socket = xQueueCreate(10, sizeof(ws_response_msg_t));
+    queue_web_socket = xQueueCreate(30, sizeof(ws_response_msg_t));
 
     queue_pulse_event = xQueueCreate(10, sizeof(int));
     ESP_ERROR_CHECK(pcnt_unit_register_event_callbacks(pcnt_unit, &cbs, queue_pulse_event));
